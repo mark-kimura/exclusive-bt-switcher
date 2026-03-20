@@ -72,6 +72,7 @@ impl AppState {
     }
 
     /// Check if recovery is needed (unclean shutdown with blocked devices)
+    #[allow(dead_code)]
     pub fn needs_recovery() -> Option<AppState> {
         match Self::load() {
             Ok(Some(state)) if !state.app_blocked_devices.is_empty() => {

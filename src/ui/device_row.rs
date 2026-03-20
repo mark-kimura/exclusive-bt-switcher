@@ -3,18 +3,20 @@ use gtk4::{self as gtk, Align, Label, Orientation};
 
 use crate::bluetooth::device::{BtAudioDevice, DeviceStatus};
 
-/// Create a GTK widget row for a Bluetooth audio device
+/// Create a GTK button row for a Bluetooth audio device.
+/// The entire row is a clickable button. Background color indicates status.
 pub fn build_device_row(
     device: &BtAudioDevice,
     is_busy: bool,
     is_exclusive: bool,
     on_switch: impl Fn(String) + 'static,
-) -> gtk::Box {
+) -> gtk::Button {
+    // Inner layout: icon + name on the left, status on the right
     let row = gtk::Box::new(Orientation::Horizontal, 12);
-    row.set_margin_start(12);
-    row.set_margin_end(12);
-    row.set_margin_top(8);
-    row.set_margin_bottom(8);
+    row.set_margin_start(8);
+    row.set_margin_end(8);
+    row.set_margin_top(6);
+    row.set_margin_bottom(6);
 
     // Icon
     let icon_name = match device.icon.as_deref() {
@@ -26,51 +28,41 @@ pub fn build_device_row(
     icon.set_pixel_size(24);
     row.append(&icon);
 
-    // Device name + address
-    let info_box = gtk::Box::new(Orientation::Vertical, 2);
-    info_box.set_hexpand(true);
-    info_box.set_valign(Align::Center);
-
+    // Device name
     let name_label = Label::new(Some(&device.alias));
     name_label.set_halign(Align::Start);
-    name_label.add_css_class("heading");
-    info_box.append(&name_label);
+    name_label.set_hexpand(true);
+    row.append(&name_label);
 
-    let addr_label = Label::new(Some(&device.address));
-    addr_label.set_halign(Align::Start);
-    addr_label.add_css_class("dim-label");
-    addr_label.add_css_class("caption");
-    info_box.append(&addr_label);
+    // Status text on the right
+    let status_text = match device.status {
+        DeviceStatus::Connected if is_exclusive => "Active",
+        DeviceStatus::Connected => "Connected",
+        DeviceStatus::Blocked => "Blocked",
+        DeviceStatus::Disconnected => "Disconnected",
+        DeviceStatus::Connecting => "Connecting…",
+    };
+    let status_label = Label::new(Some(status_text));
+    row.append(&status_label);
 
-    row.append(&info_box);
+    // The whole row is a button
+    let button = gtk::Button::new();
+    button.set_child(Some(&row));
+    button.add_css_class("device-row");
 
-    // Status badge
-    let badge = Label::new(Some(&device.status.to_string()));
-    badge.set_valign(Align::Center);
-    match device.status {
-        DeviceStatus::Connected => {
-            badge.add_css_class("success");
-        }
-        DeviceStatus::Connecting => {
-            badge.add_css_class("warning");
-        }
-        DeviceStatus::Blocked => {
-            badge.add_css_class("error");
-        }
-        DeviceStatus::Disconnected => {
-            badge.add_css_class("dim-label");
-        }
-    }
-    row.append(&badge);
-
-    // Switch button — disabled only if this device is the exclusive active one
-    let button = gtk::Button::with_label(if is_exclusive { "  Active  " } else { "  Switch  " });
-    button.set_valign(Align::Center);
-    button.set_margin_start(8);
-
+    // Style based on status
     if is_exclusive {
-        button.add_css_class("suggested-action");
+        button.add_css_class("device-active");
         button.set_sensitive(false);
+    } else {
+        match device.status {
+            DeviceStatus::Blocked => {
+                button.add_css_class("device-blocked");
+            }
+            _ => {
+                button.add_css_class("flat");
+            }
+        }
     }
 
     if is_busy {
@@ -78,13 +70,9 @@ pub fn build_device_row(
     }
 
     let path = device.path.clone();
-    let alias = device.alias.clone();
     button.connect_clicked(move |_| {
-        eprintln!("[UI] Switch clicked for {alias} at {path}");
         on_switch(path.clone());
     });
 
-    row.append(&button);
-
-    row
+    button
 }

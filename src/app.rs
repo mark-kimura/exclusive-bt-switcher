@@ -4,7 +4,6 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use crate::bluetooth::manager::BtManager;
-use crate::state::AppState;
 use crate::ui::window::{Command, Event};
 
 /// Run the backend event loop in the Tokio runtime.
@@ -42,16 +41,6 @@ pub async fn run_backend(
         Err(e) => {
             warn!("Could not check adapter state: {e}");
         }
-    }
-
-    // Check for crash recovery
-    if let Some(state) = AppState::needs_recovery() {
-        info!(
-            "Recovery needed: {} blocked device(s)",
-            state.app_blocked_devices.len()
-        );
-        // Send the current device list so UI shows the state
-        // The main.rs recovery dialog will handle asking the user
     }
 
     // Initial device list
@@ -119,10 +108,7 @@ pub async fn run_backend(
                 }
             }
             Command::Shutdown => {
-                info!("Shutdown requested, releasing all blocked devices");
-                if let Err(e) = manager.release_all().await {
-                    warn!("Release on shutdown failed: {e}");
-                }
+                info!("Shutdown — keeping blocked devices as-is");
                 break;
             }
         }

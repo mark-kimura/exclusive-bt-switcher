@@ -190,46 +190,34 @@ impl BtManager {
             .build()
             .await?;
 
+        let target_alias = target_proxy.alias().await.unwrap_or_else(|_| target_mac.clone());
+
         // 1. Unblock target if blocked
-        if target_proxy.blocked().await.unwrap_or(false) {
+        let was_blocked = target_proxy.blocked().await.unwrap_or(false);
+        if was_blocked {
             info!("Unblocking target device {target_mac}");
             target_proxy.set_blocked(false).await?;
             let mut blocked = self.app_blocked.lock().await;
             blocked.remove(&target_mac);
             // Give BlueZ time to re-register the device after unblocking
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
         }
 
-        // 2. Connect target (with retry — devices can be flaky after unblock)
-        if !target_proxy.connected().await.unwrap_or(false) {
-            let max_retries = 3;
-            let mut last_err = None;
-            for attempt in 1..=max_retries {
-                info!("Connecting to {target_mac} (attempt {attempt}/{max_retries})");
-                match target_proxy.connect().await {
-                    Ok(()) => {
-                        last_err = None;
-                        break;
-                    }
-                    Err(e) => {
-                        warn!("Connect attempt {attempt} failed: {e}");
-                        last_err = Some(e);
-                        if attempt < max_retries {
-                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        }
-                    }
-                }
+        // Steps 2-4: connect, wait for services, setup audio.
+        // If any step fails, re-block the target if we unblocked it.
+        if let Err(e) = self.connect_and_setup(&target_proxy, &target_mac, &target_alias).await {
+            if was_blocked {
+                warn!("Re-blocking {target_mac} after failed switch");
+                let _ = target_proxy.set_blocked(true).await;
+                let mut blocked = self.app_blocked.lock().await;
+                blocked.insert(target_mac.clone());
             }
-            if let Some(e) = last_err {
-                return Err(anyhow::anyhow!("Failed to connect to {target_mac} after {max_retries} attempts: {e}"));
+            // Disconnect if partially connected
+            if target_proxy.connected().await.unwrap_or(false) {
+                let _ = target_proxy.disconnect().await;
             }
+            return Err(e);
         }
-
-        // 3. Wait for Connected + ServicesResolved
-        self.wait_for_connection(&target_proxy, &target_mac).await?;
-
-        // 4. Wait for PipeWire sink + set default + migrate streams
-        crate::audio::pipewire::setup_audio_for_device(&target_mac).await?;
 
         // 5. Disconnect + block all other paired audio devices
         let all_devices = self.list_paired_audio_devices_raw().await?;
@@ -314,34 +302,111 @@ impl BtManager {
         self.list_paired_audio_devices().await
     }
 
-    /// Wait for Connected=true and ServicesResolved=true (up to 30s)
+    /// Connect target, wait for services, setup audio. Returns error on failure.
+    async fn connect_and_setup(
+        &self,
+        proxy: &Device1Proxy<'_>,
+        mac: &str,
+        alias: &str,
+    ) -> anyhow::Result<()> {
+        // Connect with retry
+        if !proxy.connected().await.unwrap_or(false) {
+            let max_retries = 3;
+            let mut last_err = None;
+            for attempt in 1..=max_retries {
+                info!("Connecting to {mac} (attempt {attempt}/{max_retries})");
+                match proxy.connect().await {
+                    Ok(()) => {
+                        last_err = None;
+                        break;
+                    }
+                    Err(e) => {
+                        let err_str = e.to_string();
+                        warn!("Connect attempt {attempt} failed: {e}");
+                        if err_str.contains("InProgress") || err_str.contains("busy") {
+                            info!("Connection already in progress, waiting...");
+                            last_err = None;
+                            break;
+                        }
+                        last_err = Some(e);
+                        if attempt < max_retries {
+                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        }
+                    }
+                }
+            }
+            if let Some(e) = last_err {
+                let err_str = e.to_string();
+                let friendly = if err_str.contains("NotReady") || err_str.contains("not available") {
+                    format!("{alias} is not powered on or out of range.")
+                } else if err_str.contains("connection-unknown") || err_str.contains("Does Not Exist") {
+                    format!("{alias} could not be reached.")
+                } else if err_str.contains("ConnectFailed") || err_str.contains("Page Timeout") || err_str.contains("page-timeout") {
+                    format!("{alias} is not responding.")
+                } else {
+                    format!("{alias} could not be connected.")
+                };
+                return Err(anyhow::anyhow!(friendly));
+            }
+        }
+
+        // Wait for services
+        self.wait_for_connection(proxy, mac, alias).await?;
+
+        // Setup audio
+        crate::audio::pipewire::setup_audio_for_device(mac).await?;
+
+        Ok(())
+    }
+
+    /// Wait for Connected=true and ServicesResolved=true.
+    /// If services don't resolve within 10s, disconnect and reconnect once.
     async fn wait_for_connection(
         &self,
         proxy: &Device1Proxy<'_>,
         mac: &str,
+        alias: &str,
     ) -> anyhow::Result<()> {
-        let timeout = tokio::time::Duration::from_secs(30);
-        let start = tokio::time::Instant::now();
         let interval = tokio::time::Duration::from_millis(300);
 
-        loop {
-            let connected = proxy.connected().await.unwrap_or(false);
-            let resolved = proxy.services_resolved().await.unwrap_or(false);
+        for attempt in 1..=2 {
+            let attempt_timeout = if attempt == 1 { 10 } else { 15 };
+            let start = tokio::time::Instant::now();
 
-            if connected && resolved {
-                info!("Device {mac} connected and services resolved");
-                return Ok(());
+            loop {
+                let connected = proxy.connected().await.unwrap_or(false);
+                let resolved = proxy.services_resolved().await.unwrap_or(false);
+
+                if connected && resolved {
+                    info!("Device {mac} connected and services resolved");
+                    return Ok(());
+                }
+
+                if start.elapsed() > tokio::time::Duration::from_secs(attempt_timeout) {
+                    if !connected {
+                        return Err(anyhow::anyhow!(
+                            "{alias} is not responding."
+                        ));
+                    }
+                    // Connected but services not resolved — try disconnect+reconnect
+                    if attempt == 1 {
+                        warn!("Services not resolved for {mac}, reconnecting...");
+                        let _ = proxy.disconnect().await;
+                        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                        let _ = proxy.connect().await;
+                        break; // go to attempt 2
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "{alias} connected but audio services did not start. Try again."
+                        ));
+                    }
+                }
+
+                debug!("Waiting for {mac}: connected={connected}, resolved={resolved}");
+                tokio::time::sleep(interval).await;
             }
-
-            if start.elapsed() > timeout {
-                return Err(anyhow::anyhow!(
-                    "Timeout waiting for {mac} to connect (connected={connected}, resolved={resolved})"
-                ));
-            }
-
-            debug!("Waiting for {mac}: connected={connected}, resolved={resolved}");
-            tokio::time::sleep(interval).await;
         }
+        unreachable!()
     }
 
     /// Get raw list of paired audio device paths + MAC addresses

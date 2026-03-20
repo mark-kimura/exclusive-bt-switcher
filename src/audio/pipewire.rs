@@ -164,7 +164,7 @@ pub async fn setup_audio_for_device(mac: &str) -> anyhow::Result<()> {
             None => {
                 if start.elapsed() > timeout {
                     return Err(anyhow!(
-                        "Timeout: PipeWire sink for {mac} did not appear within 10s"
+                        "Audio output did not appear. The device may not support audio playback."
                     ));
                 }
                 debug!("Waiting for PipeWire sink for {mac}...");

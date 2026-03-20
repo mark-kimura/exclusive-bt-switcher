@@ -30,7 +30,7 @@ pub enum Event {
 
 pub struct MainWindow {
     pub window: ApplicationWindow,
-    device_list_box: gtk::ListBox,
+    device_list_box: gtk::Box,
     spinner: gtk::Spinner,
     status_label: Label,
     bt_off_banner: gtk::Box,
@@ -48,6 +48,22 @@ impl MainWindow {
             .default_width(420)
             .default_height(500)
             .build();
+
+        // Global CSS for device row styling
+        let css = gtk::CssProvider::new();
+        css.load_from_data(
+            "button.device-active { background-color: #3584e4; color: white; }
+             button.device-active:disabled { background-color: #3584e4; color: white; opacity: 1; }
+             button.device-blocked { background-color: #c97070; color: white; }
+             button.device-row { border-radius: 8px; padding: 4px; }
+             button.release-all { background-color: #27ae60; color: white; }
+             label.error-label { color: #e74c3c; }",
+        );
+        gtk::style_context_add_provider_for_display(
+            &gtk::gdk::Display::default().expect("display"),
+            &css,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
 
         // Header bar
         let header = gtk::HeaderBar::new();
@@ -100,16 +116,17 @@ impl MainWindow {
         scrolled.set_vexpand(true);
         scrolled.set_policy(PolicyType::Never, PolicyType::Automatic);
 
-        let device_list_box = gtk::ListBox::new();
-        device_list_box.set_selection_mode(gtk::SelectionMode::None);
-        device_list_box.add_css_class("boxed-list");
+        let device_list_box = gtk::Box::new(Orientation::Vertical, 4);
+        device_list_box.set_margin_start(8);
+        device_list_box.set_margin_end(8);
+        device_list_box.set_margin_top(4);
         scrolled.set_child(Some(&device_list_box));
         content.append(&scrolled);
 
         // Release All button at the bottom
         let release_btn = gtk::Button::with_label("Release All");
         release_btn.set_tooltip_text(Some("Unblock all devices blocked by this app"));
-        release_btn.add_css_class("destructive-action");
+        release_btn.add_css_class("release-all");
         release_btn.set_margin_start(12);
         release_btn.set_margin_end(12);
         release_btn.set_margin_top(8);
@@ -156,6 +173,7 @@ impl MainWindow {
                 *self.is_busy.borrow_mut() = true;
                 self.spinner.set_visible(true);
                 self.spinner.start();
+                self.status_label.remove_css_class("error-label");
                 self.status_label.set_text("Switching...");
                 self.release_btn.set_sensitive(false);
                 self.refresh_btn.set_sensitive(false);
@@ -172,21 +190,10 @@ impl MainWindow {
                 *self.is_busy.borrow_mut() = false;
                 self.spinner.stop();
                 self.spinner.set_visible(false);
-                self.status_label.set_text(&format!("Error: {msg}"));
+                self.status_label.set_text(&msg);
+                self.status_label.add_css_class("error-label");
                 self.release_btn.set_sensitive(true);
                 self.refresh_btn.set_sensitive(true);
-
-                // Show error dialog
-                let dialog = gtk::MessageDialog::builder()
-                    .message_type(gtk::MessageType::Error)
-                    .buttons(gtk::ButtonsType::Ok)
-                    .text("Error")
-                    .secondary_text(&msg)
-                    .transient_for(&self.window)
-                    .modal(true)
-                    .build();
-                dialog.connect_response(|dlg, _| dlg.close());
-                dialog.present();
             }
             Event::AdapterPowered(powered) => {
                 self.bt_off_banner.set_visible(!powered);

@@ -65,9 +65,6 @@ fn build_ui(app: &gtk::Application) {
         glib::ControlFlow::Continue
     });
 
-    // Clone cmd_tx for recovery dialog before it moves into the thread
-    let cmd_tx_recovery = cmd_tx.clone();
-
     // Spawn Tokio runtime in a background thread
     let event_tx_clone = event_tx.clone();
     std::thread::spawn(move || {
@@ -114,31 +111,6 @@ fn build_ui(app: &gtk::Application) {
         }
         default_hook(info);
     }));
-
-    // Show recovery dialog if needed
-    if let Some(recovery_state) = state::AppState::needs_recovery() {
-        let dialog = gtk::MessageDialog::builder()
-            .message_type(gtk::MessageType::Warning)
-            .buttons(gtk::ButtonsType::YesNo)
-            .text("Recovery Needed")
-            .secondary_text(&format!(
-                "The app previously blocked {} device(s). Release them?\n\nBlocked: {}",
-                recovery_state.app_blocked_devices.len(),
-                recovery_state.app_blocked_devices.join(", ")
-            ))
-            .transient_for(&main_window.window)
-            .modal(true)
-            .build();
-
-        let cmd = cmd_tx_recovery;
-        dialog.connect_response(move |dlg, response| {
-            if response == gtk::ResponseType::Yes {
-                let _ = cmd.send(Command::ReleaseAll);
-            }
-            dlg.close();
-        });
-        dialog.present();
-    }
 
     // When window is closed, send shutdown to backend
     let cmd_tx_close = main_window.cmd_sender().clone();
