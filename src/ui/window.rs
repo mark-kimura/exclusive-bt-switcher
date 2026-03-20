@@ -44,7 +44,7 @@ impl MainWindow {
     pub fn new(app: &gtk::Application, cmd_sender: mpsc::UnboundedSender<Command>) -> Self {
         let window = ApplicationWindow::builder()
             .application(app)
-            .title("BT Switcher")
+            .title("Exclusive BT Switcher")
             .default_width(420)
             .default_height(500)
             .build();
@@ -55,11 +55,6 @@ impl MainWindow {
         let refresh_btn = gtk::Button::from_icon_name("view-refresh-symbolic");
         refresh_btn.set_tooltip_text(Some("Refresh device list"));
         header.pack_start(&refresh_btn);
-
-        let release_btn = gtk::Button::with_label("Release All");
-        release_btn.set_tooltip_text(Some("Unblock all devices blocked by this app"));
-        release_btn.add_css_class("destructive-action");
-        header.pack_end(&release_btn);
 
         window.set_titlebar(Some(&header));
 
@@ -110,6 +105,16 @@ impl MainWindow {
         device_list_box.add_css_class("boxed-list");
         scrolled.set_child(Some(&device_list_box));
         content.append(&scrolled);
+
+        // Release All button at the bottom
+        let release_btn = gtk::Button::with_label("Release All");
+        release_btn.set_tooltip_text(Some("Unblock all devices blocked by this app"));
+        release_btn.add_css_class("destructive-action");
+        release_btn.set_margin_start(12);
+        release_btn.set_margin_end(12);
+        release_btn.set_margin_top(8);
+        release_btn.set_margin_bottom(12);
+        content.append(&release_btn);
 
         window.set_child(Some(&content));
 

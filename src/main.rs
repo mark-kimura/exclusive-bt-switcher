@@ -24,7 +24,7 @@ fn main() {
         .with_max_level(tracing::Level::INFO)
         .init();
 
-    info!("Starting BT Switcher");
+    info!("Starting Exclusive BT Switcher");
 
     let application = gtk::Application::builder()
         .application_id(APP_ID)
