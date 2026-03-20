@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- Background circle -->
+  <circle cx="24" cy="24" r="22" fill="#3b82f6" />
+  <!-- Bluetooth symbol -->
+  <path d="M24 8 L24 40 M24 8 L32 16 L16 32 M24 40 L32 32 L16 16"
+        stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+  <!-- Lock indicator -->
+  <rect x="32" y="30" width="12" height="10" rx="2" fill="#ef4444" />
+  <path d="M35 30 V27 A3 3 0 0 1 41 27 V30" stroke="#ef4444" stroke-width="2" fill="none" />
+  <rect x="37" y="34" width="2" height="3" rx="1" fill="white" />
+</svg>
