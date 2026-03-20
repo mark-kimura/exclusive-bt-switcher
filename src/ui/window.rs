@@ -23,6 +23,7 @@ pub enum Event {
     DeviceListUpdated(Vec<BtAudioDevice>),
     SwitchStarted,
     SwitchComplete,
+    StatusUpdate(String),
     Error(String),
     AdapterPowered(bool),
     Quit,
@@ -56,7 +57,7 @@ impl MainWindow {
              button.device-active:disabled { background-color: #3584e4; color: white; opacity: 1; }
              button.device-blocked { background-color: #c97070; color: white; }
              button.device-row { border-radius: 8px; padding: 4px; }
-             button.release-all { background-color: #27ae60; color: white; }
+             button.activate-all { background-color: #3584e4; color: white; }
              label.error-label { color: #e74c3c; }",
         );
         gtk::style_context_add_provider_for_display(
@@ -124,9 +125,9 @@ impl MainWindow {
         content.append(&scrolled);
 
         // Release All button at the bottom
-        let release_btn = gtk::Button::with_label("Release All");
+        let release_btn = gtk::Button::with_label("Unblock All");
         release_btn.set_tooltip_text(Some("Unblock all devices blocked by this app"));
-        release_btn.add_css_class("release-all");
+        release_btn.add_css_class("activate-all");
         release_btn.set_margin_start(12);
         release_btn.set_margin_end(12);
         release_btn.set_margin_top(8);
@@ -185,6 +186,9 @@ impl MainWindow {
                 self.status_label.set_text("");
                 self.release_btn.set_sensitive(true);
                 self.refresh_btn.set_sensitive(true);
+            }
+            Event::StatusUpdate(msg) => {
+                self.status_label.set_text(&msg);
             }
             Event::Error(msg) => {
                 *self.is_busy.borrow_mut() = false;
