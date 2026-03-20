@@ -43,6 +43,15 @@ trait Device1 {
 
     #[zbus(property)]
     fn services_resolved(&self) -> zbus::Result<bool>;
+
+    #[zbus(property)]
+    fn trusted(&self) -> zbus::Result<bool>;
+
+    #[zbus(property)]
+    fn set_trusted(&self, trusted: bool) -> zbus::Result<()>;
+
+    #[zbus(property)]
+    fn address_type(&self) -> zbus::Result<String>;
 }
 
 /// zbus proxy for BlueZ org.bluez.Adapter1 interface
@@ -139,9 +148,20 @@ impl BtManager {
 
             let connected = proxy.connected().await.unwrap_or(false);
             let blocked = proxy.blocked().await.unwrap_or(false);
+            let trusted = proxy.trusted().await.unwrap_or(true);
             let address = proxy.address().await.unwrap_or_default();
+            let is_le = Self::is_le_device(&proxy).await;
 
+            // A device is "blocked" if:
+            // - Classic BT: Blocked=true (kernel-level block)
+            // - BLE: Trusted=false and this app suppressed it (soft block)
+            let app_suppressed = {
+                let ab = app_blocked.clone();
+                ab.contains(&address)
+            };
             let status = if blocked {
+                DeviceStatus::Blocked
+            } else if is_le && !trusted && app_suppressed {
                 DeviceStatus::Blocked
             } else if connected {
                 DeviceStatus::Connected
@@ -168,11 +188,16 @@ impl BtManager {
     }
 
     /// Execute exclusive switch: connect target, block all others.
+    /// Calls `on_progress` with a status message at each step.
     /// Returns updated device list on success.
-    pub async fn exclusive_switch(
+    pub async fn exclusive_switch<F>(
         &self,
         target_path: &str,
-    ) -> anyhow::Result<Vec<BtAudioDevice>> {
+        on_progress: F,
+    ) -> anyhow::Result<Vec<BtAudioDevice>>
+    where
+        F: Fn(&str),
+    {
         let _lock = self.switch_lock.lock().await;
         info!("Starting exclusive switch to {target_path}");
 
@@ -192,23 +217,43 @@ impl BtManager {
 
         let target_alias = target_proxy.alias().await.unwrap_or_else(|_| target_mac.clone());
 
-        // 1. Unblock target if blocked
-        let was_blocked = target_proxy.blocked().await.unwrap_or(false);
-        if was_blocked {
-            info!("Unblocking target device {target_mac}");
-            target_proxy.set_blocked(false).await?;
-            let mut blocked = self.app_blocked.lock().await;
-            blocked.remove(&target_mac);
-            // Give BlueZ time to re-register the device after unblocking
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        let target_is_le = Self::is_le_device(&target_proxy).await;
+        let was_suppressed = {
+            let ab = self.app_blocked.lock().await;
+            ab.contains(&target_mac)
+        };
+
+        // 1. Enable target device (undo suppression)
+        if was_suppressed {
+            if target_is_le {
+                // BLE: restore Trusted=true (the Connect() call later will re-enable incoming)
+                info!("Restoring trust for BLE device {target_mac}");
+                target_proxy.set_trusted(true).await?;
+            } else {
+                // Classic: unblock
+                info!("Unblocking classic device {target_mac}");
+                target_proxy.set_blocked(false).await?;
+                // Give BlueZ time to re-register after unblocking
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            }
+            {
+                let mut blocked = self.app_blocked.lock().await;
+                blocked.remove(&target_mac);
+            }
+            on_progress(&format!("Connecting to {target_alias}..."));
         }
 
-        // Steps 2-4: connect, wait for services, setup audio.
-        // If any step fails, re-block the target if we unblocked it.
-        if let Err(e) = self.connect_and_setup(&target_proxy, &target_mac, &target_alias).await {
-            if was_blocked {
-                warn!("Re-blocking {target_mac} after failed switch");
-                let _ = target_proxy.set_blocked(true).await;
+        // Steps 2-4: connect, wait for audio sink, setup audio.
+        // If any step fails, re-suppress the target.
+        if let Err(e) = self.connect_and_setup(&target_proxy, &target_mac, &target_alias, target_is_le).await {
+            if was_suppressed {
+                warn!("Re-suppressing {target_mac} after failed switch");
+                if target_is_le {
+                    let _ = target_proxy.set_trusted(false).await;
+                    let _ = target_proxy.disconnect().await;
+                } else {
+                    let _ = target_proxy.set_blocked(true).await;
+                }
                 let mut blocked = self.app_blocked.lock().await;
                 blocked.insert(target_mac.clone());
             }
@@ -219,7 +264,10 @@ impl BtManager {
             return Err(e);
         }
 
-        // 5. Disconnect + block all other paired audio devices
+        on_progress("Blocking other devices...");
+
+        // 5. Suppress all other paired audio devices
+        // Hybrid approach: Blocked=true for classic BT, Trusted=false+Disconnect for BLE
         let all_devices = self.list_paired_audio_devices_raw().await?;
         let mut newly_blocked = Vec::new();
         for (path, address) in &all_devices {
@@ -231,21 +279,36 @@ impl BtManager {
                 .build()
                 .await?;
 
-            // Disconnect if connected
-            if proxy.connected().await.unwrap_or(false) {
-                info!("Disconnecting {address}");
-                if let Err(e) = proxy.disconnect().await {
-                    warn!("Failed to disconnect {address}: {e}");
-                }
-            }
+            let is_le = Self::is_le_device(&proxy).await;
 
-            // Block to prevent auto-reconnect (only if not already blocked by someone else)
-            if !proxy.blocked().await.unwrap_or(false) {
-                info!("Blocking {address}");
-                if let Err(e) = proxy.set_blocked(true).await {
-                    warn!("Failed to block {address}: {e}");
-                } else {
-                    newly_blocked.push(address.clone());
+            if is_le {
+                // BLE: use Trusted=false + Disconnect() to suppress
+                // This avoids GATT cache corruption that Blocked=true causes
+                info!("Suppressing BLE device {address} (Trusted=false + Disconnect)");
+                if let Err(e) = proxy.set_trusted(false).await {
+                    warn!("Failed to untrust {address}: {e}");
+                }
+                if proxy.connected().await.unwrap_or(false) {
+                    if let Err(e) = proxy.disconnect().await {
+                        warn!("Failed to disconnect {address}: {e}");
+                    }
+                }
+                newly_blocked.push(address.clone());
+            } else {
+                // Classic BT: use Blocked=true (reliable, no issues)
+                if proxy.connected().await.unwrap_or(false) {
+                    info!("Disconnecting {address}");
+                    if let Err(e) = proxy.disconnect().await {
+                        warn!("Failed to disconnect {address}: {e}");
+                    }
+                }
+                if !proxy.blocked().await.unwrap_or(false) {
+                    info!("Blocking classic device {address}");
+                    if let Err(e) = proxy.set_blocked(true).await {
+                        warn!("Failed to block {address}: {e}");
+                    } else {
+                        newly_blocked.push(address.clone());
+                    }
                 }
             }
         }
@@ -263,13 +326,13 @@ impl BtManager {
         self.list_paired_audio_devices().await
     }
 
-    /// Release all: unblock only devices that THIS app blocked, disconnect target
+    /// Release all: undo suppression on devices that THIS app suppressed
     pub async fn release_all(&self) -> anyhow::Result<Vec<BtAudioDevice>> {
         let _lock = self.switch_lock.lock().await;
-        info!("Releasing all app-blocked devices");
+        info!("Releasing all app-suppressed devices");
 
         let mut app_blocked = self.app_blocked.lock().await;
-        let addresses_to_unblock: Vec<String> = app_blocked.iter().cloned().collect();
+        let addresses_to_release: Vec<String> = app_blocked.iter().cloned().collect();
 
         let objects = self.get_managed_objects().await?;
 
@@ -284,11 +347,22 @@ impl BtManager {
 
             let address = proxy.address().await.unwrap_or_default();
 
-            if addresses_to_unblock.contains(&address) {
-                if proxy.blocked().await.unwrap_or(false) {
-                    info!("Unblocking {address}");
-                    if let Err(e) = proxy.set_blocked(false).await {
-                        warn!("Failed to unblock {address}: {e}");
+            if addresses_to_release.contains(&address) {
+                let is_le = Self::is_le_device(&proxy).await;
+
+                if is_le {
+                    // BLE: restore Trusted=true
+                    info!("Restoring trust for BLE device {address}");
+                    if let Err(e) = proxy.set_trusted(true).await {
+                        warn!("Failed to re-trust {address}: {e}");
+                    }
+                } else {
+                    // Classic: unblock
+                    if proxy.blocked().await.unwrap_or(false) {
+                        info!("Unblocking classic device {address}");
+                        if let Err(e) = proxy.set_blocked(false).await {
+                            warn!("Failed to unblock {address}: {e}");
+                        }
                     }
                 }
             }
@@ -302,14 +376,30 @@ impl BtManager {
         self.list_paired_audio_devices().await
     }
 
-    /// Connect target, wait for services, setup audio. Returns error on failure.
+    /// Connect target, wait for readiness, setup audio. Returns error on failure.
+    /// For BLE devices, skips ServicesResolved and uses PipeWire sink as readiness signal.
     async fn connect_and_setup(
         &self,
         proxy: &Device1Proxy<'_>,
         mac: &str,
         alias: &str,
+        is_le: bool,
     ) -> anyhow::Result<()> {
-        // Connect with retry
+        // For BLE: wait briefly to see if device auto-connects before calling Connect()
+        if is_le && !proxy.connected().await.unwrap_or(false) {
+            info!("Waiting for BLE device {mac} to auto-connect...");
+            let auto_wait = tokio::time::Duration::from_secs(4);
+            let start = tokio::time::Instant::now();
+            while start.elapsed() < auto_wait {
+                if proxy.connected().await.unwrap_or(false) {
+                    info!("BLE device {mac} auto-connected");
+                    break;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+            }
+        }
+
+        // Connect with retry (if not already connected)
         if !proxy.connected().await.unwrap_or(false) {
             let max_retries = 3;
             let mut last_err = None;
@@ -350,18 +440,35 @@ impl BtManager {
             }
         }
 
-        // Wait for services
-        self.wait_for_connection(proxy, mac, alias).await?;
+        if is_le {
+            // BLE: skip ServicesResolved — go straight to waiting for PipeWire sink
+            // Wait for Connected=true first
+            let timeout = tokio::time::Duration::from_secs(10);
+            let start = tokio::time::Instant::now();
+            while start.elapsed() < timeout {
+                if proxy.connected().await.unwrap_or(false) {
+                    break;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+            }
+            if !proxy.connected().await.unwrap_or(false) {
+                return Err(anyhow::anyhow!("{alias} is not responding."));
+            }
+            info!("BLE device {mac} connected, waiting for PipeWire sink...");
+        } else {
+            // Classic BT: wait for ServicesResolved as before
+            self.wait_for_services(proxy, mac, alias).await?;
+        }
 
-        // Setup audio
+        // Setup audio — PipeWire sink appearance is the final readiness signal
         crate::audio::pipewire::setup_audio_for_device(mac).await?;
 
         Ok(())
     }
 
-    /// Wait for Connected=true and ServicesResolved=true.
+    /// Wait for Connected=true and ServicesResolved=true (classic BT only).
     /// If services don't resolve within 10s, disconnect and reconnect once.
-    async fn wait_for_connection(
+    async fn wait_for_services(
         &self,
         proxy: &Device1Proxy<'_>,
         mac: &str,
@@ -407,6 +514,17 @@ impl BtManager {
             }
         }
         unreachable!()
+    }
+
+    /// Determine if a device uses LE (BLE) transport.
+    /// BlueZ sets AddressType to "random" for BLE devices with random addresses.
+    /// For BR/EDR, AddressType is typically "public" or absent.
+    /// We use "random" as the definitive BLE indicator.
+    async fn is_le_device(proxy: &Device1Proxy<'_>) -> bool {
+        match proxy.address_type().await {
+            Ok(addr_type) => addr_type == "random",
+            Err(_) => false,
+        }
     }
 
     /// Get raw list of paired audio device paths + MAC addresses
