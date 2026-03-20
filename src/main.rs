@@ -16,7 +16,7 @@ use tracing::info;
 
 use ui::window::{Command, Event, MainWindow};
 
-const APP_ID: &str = "com.github.exclusive-bt-switcher";
+const APP_ID: &str = "com.github.btswitch";
 
 fn main() {
     // Initialize logging

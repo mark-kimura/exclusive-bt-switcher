@@ -49,10 +49,10 @@ sudo apt install libgtk-4-dev build-essential pkg-config libxdo-dev
 ### Build and Run
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/exclusive-bt-switcher.git
-cd exclusive-bt-switcher
+git clone https://github.com/YOUR_USERNAME/btswitch.git
+cd btswitch
 cargo build --release
-./target/release/exclusive-bt-switcher
+./target/release/btswitch
 ```
 
 ### Install to PATH (optional)
@@ -71,6 +71,8 @@ cargo install --path .
   - BLE devices: uses `Trusted=false` + `Disconnect()` to avoid GATT cache corruption
 - **Audio routing:** `pw-dump` for device discovery, `wpctl set-default` for sink switching, `pactl move-sink-input` for migrating active streams
 - **Crash-safe:** state persisted to `~/.config/exclusive-bt-switcher/state.json` with atomic writes
+
+After installing, just run `btswitch` from your terminal or app launcher.
 
 ## Troubleshooting
 

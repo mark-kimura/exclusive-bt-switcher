@@ -63,7 +63,10 @@ pub async fn run_backend(
         match cmd {
             Command::SwitchTo(path) => {
                 let _ = event_tx.send(Event::SwitchStarted);
-                match manager.exclusive_switch(&path).await {
+                let tx = event_tx.clone();
+                match manager.exclusive_switch(&path, |status| {
+                    let _ = tx.send(Event::StatusUpdate(status.to_string()));
+                }).await {
                     Ok(devices) => {
                         let _ = event_tx.send(Event::SwitchComplete);
                         let _ = event_tx.send(Event::DeviceListUpdated(devices));

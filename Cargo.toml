@@ -1,5 +1,5 @@
 [package]
-name = "exclusive-bt-switcher"
+name = "btswitch"
 version = "0.1.0"
 edition = "2021"
 description = "Exclusively lock one Bluetooth audio device at a time"

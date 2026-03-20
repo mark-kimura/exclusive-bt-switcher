@@ -1,7 +1,7 @@
 [Desktop Entry]
-Name=BT Switcher
+Name=Exclusive BT Switcher
 Comment=Exclusively lock one Bluetooth audio device at a time
-Exec=exclusive-bt-switcher
+Exec=btswitch
 Icon=bluetooth-active
 Type=Application
 Categories=Utility;Audio;Settings;
