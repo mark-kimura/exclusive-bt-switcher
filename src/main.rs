@@ -112,6 +112,10 @@ fn build_ui(app: &gtk::Application) {
         default_hook(info);
     }));
 
+    // System tray (best-effort, pure D-Bus via ksni — no GTK3)
+    let cmd_tx_tray = main_window.cmd_sender().clone();
+    ui::tray::spawn_tray(cmd_tx_tray);
+
     // When window is closed, send shutdown to backend
     let cmd_tx_close = main_window.cmd_sender().clone();
     main_window.window.connect_close_request(move |_| {

@@ -110,6 +110,9 @@ pub async fn run_backend(
                     }
                 }
             }
+            Command::ShowWindow => {
+                let _ = event_tx.send(Event::ShowWindow);
+            }
             Command::Shutdown => {
                 info!("Shutdown — keeping blocked devices as-is");
                 break;

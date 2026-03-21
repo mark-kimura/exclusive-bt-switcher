@@ -14,6 +14,7 @@ pub enum Command {
     SwitchTo(String),
     ReleaseAll,
     Refresh,
+    ShowWindow,
     Shutdown,
 }
 
@@ -26,6 +27,7 @@ pub enum Event {
     StatusUpdate(String),
     Error(String),
     AdapterPowered(bool),
+    ShowWindow,
     Quit,
 }
 
@@ -201,6 +203,11 @@ impl MainWindow {
             }
             Event::AdapterPowered(powered) => {
                 self.bt_off_banner.set_visible(!powered);
+            }
+            Event::ShowWindow => {
+                self.window.set_visible(true);
+                self.window.unminimize();
+                self.window.present();
             }
             Event::Quit => {
                 // Handled in main.rs event polling loop
