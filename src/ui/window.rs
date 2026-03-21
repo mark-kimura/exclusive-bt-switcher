@@ -205,13 +205,20 @@ impl MainWindow {
                 self.bt_off_banner.set_visible(!powered);
             }
             Event::ShowWindow => {
-                // Remove skip-taskbar hint before showing
-                let title = self.window.title().unwrap_or_default();
-                let _ = std::process::Command::new("wmctrl")
-                    .args(["-r", &title, "-b", "remove,skip_taskbar"])
-                    .spawn();
+                let title = self.window.title().unwrap_or_default().to_string();
+                // Remove skip-taskbar, unminimize, and force-activate via wmctrl
+                self.window.set_visible(true);
                 self.window.unminimize();
                 self.window.present();
+                // wmctrl -a forces activation even when another app has focus
+                gtk4::glib::idle_add_local_once(move || {
+                    let _ = std::process::Command::new("wmctrl")
+                        .args(["-r", &title, "-b", "remove,skip_taskbar"])
+                        .status();
+                    let _ = std::process::Command::new("wmctrl")
+                        .args(["-a", "Exclusive BT Switcher"])
+                        .spawn();
+                });
             }
             Event::Quit => {
                 // Handled in main.rs event polling loop
