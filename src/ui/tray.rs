@@ -1,5 +1,6 @@
-use ksni::menu::{MenuItem, StandardItem};
+use ksni::menu::{CheckmarkItem, MenuItem, StandardItem};
 use ksni::TrayMethods;
+use std::path::PathBuf;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -8,10 +9,64 @@ use crate::ui::window::Command;
 /// 32x32 PNG icon embedded at compile time
 const ICON_PNG: &[u8] = include_bytes!("../../resources/icons/btswitch32x32.png");
 
+/// Build autostart desktop entry with the full path to the current binary
+fn autostart_entry() -> String {
+    let exe = std::env::current_exe()
+        .unwrap_or_else(|_| PathBuf::from("btswitch"));
+    format!(
+        "[Desktop Entry]\n\
+         Type=Application\n\
+         Name=Exclusive BT Switcher\n\
+         Exec={} --minimized\n\
+         StartupNotify=false\n\
+         Terminal=false\n\
+         X-GNOME-Autostart-enabled=true\n",
+        exe.display()
+    )
+}
+
 /// System tray item using ksni (pure D-Bus SNI, no GTK3)
 struct BtSwitchTray {
     cmd_tx: mpsc::UnboundedSender<Command>,
     icon_argb: Vec<u8>,
+    autostart: bool,
+}
+
+fn autostart_path() -> PathBuf {
+    let dir = dirs_path().join("autostart");
+    std::fs::create_dir_all(&dir).ok();
+    dir.join("btswitch.desktop")
+}
+
+fn dirs_path() -> PathBuf {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        PathBuf::from(xdg)
+    } else if let Some(home) = std::env::var_os("HOME") {
+        PathBuf::from(home).join(".config")
+    } else {
+        PathBuf::from("/tmp")
+    }
+}
+
+fn is_autostart_enabled() -> bool {
+    autostart_path().exists()
+}
+
+fn set_autostart(enabled: bool) {
+    let path = autostart_path();
+    if enabled {
+        if let Err(e) = std::fs::write(&path, autostart_entry()) {
+            warn!("Failed to create autostart entry: {e}");
+        } else {
+            info!("Autostart enabled");
+        }
+    } else {
+        if let Err(e) = std::fs::remove_file(&path) {
+            warn!("Failed to remove autostart entry: {e}");
+        } else {
+            info!("Autostart disabled");
+        }
+    }
 }
 
 /// Decode PNG bytes into ARGB pixel data (big-endian, as ksni expects)
@@ -72,6 +127,17 @@ impl ksni::Tray for BtSwitchTray {
             }
             .into(),
             MenuItem::Separator,
+            CheckmarkItem {
+                label: "Start at Login".to_string(),
+                checked: self.autostart,
+                activate: Box::new(|tray: &mut Self| {
+                    tray.autostart = !tray.autostart;
+                    set_autostart(tray.autostart);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            MenuItem::Separator,
             StandardItem {
                 label: "Quit".to_string(),
                 activate: Box::new(|tray: &mut Self| {
@@ -95,7 +161,11 @@ pub fn spawn_tray(cmd_tx: mpsc::UnboundedSender<Command>) {
 
         rt.block_on(async {
             let (_w, _h, icon_argb) = decode_png_to_argb(ICON_PNG);
-            let tray = BtSwitchTray { cmd_tx, icon_argb };
+            let tray = BtSwitchTray {
+                cmd_tx,
+                icon_argb,
+                autostart: is_autostart_enabled(),
+            };
             match tray.spawn().await {
                 Ok(_handle) => {
                     info!("System tray icon created");

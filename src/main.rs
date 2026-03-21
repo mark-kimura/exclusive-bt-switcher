@@ -32,8 +32,11 @@ fn main() {
 
     application.connect_activate(build_ui);
 
-    // Run GTK application (handles single-instance via app ID)
-    application.run();
+    // Filter out our custom flags before passing to GTK
+    let gtk_args: Vec<String> = std::env::args()
+        .filter(|a| a != "--minimized")
+        .collect();
+    application.run_with_args(&gtk_args);
 }
 
 fn build_ui(app: &gtk::Application) {
@@ -122,5 +125,12 @@ fn build_ui(app: &gtk::Application) {
         glib::Propagation::Stop
     });
 
-    main_window.window.present();
+    // Start minimized if --minimized flag is passed (used by autostart)
+    if std::env::args().any(|a| a == "--minimized") {
+        // Must present first so GTK maps the window, then immediately minimize
+        main_window.window.present();
+        main_window.window.minimize();
+    } else {
+        main_window.window.present();
+    }
 }
