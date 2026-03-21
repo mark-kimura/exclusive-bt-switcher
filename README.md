@@ -55,11 +55,13 @@ cargo build --release
 ./target/release/btswitch
 ```
 
-### Install to PATH (optional)
+### Install
 
 ```bash
-cargo install --path .
+./install.sh
 ```
+
+This builds the binary, adds it to your PATH, and registers "Exclusive BT Switcher" in your app menu.
 
 ## Technical Details
 
