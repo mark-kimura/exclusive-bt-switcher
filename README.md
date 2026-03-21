@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="resources/screenshots/btswitch_large_logo.png" alt="Exclusive BT Switcher" width="128">
+</p>
+
 # Exclusive BT Switcher
 
 A Linux desktop app that lets you **exclusively lock one Bluetooth audio device** at a time. When you select a device, all other paired BT audio devices are blocked from reconnecting — no more headphones stealing audio from your speakers before a video call.
@@ -19,6 +23,12 @@ When multiple Bluetooth audio devices are paired on Linux, any of them can auto-
 5. Audio streams are automatically migrated to the selected device
 
 The block persists even after closing the app. Click "Unblock All" when you want to allow all devices to connect freely again.
+
+## Screenshots
+
+| Main Window | Tray Menu |
+|:-----------:|:---------:|
+| ![Main Window](resources/screenshots/main_window.png) | ![Tray Menu](resources/screenshots/right_click_menu.png) |
 
 ## Features
 
@@ -65,7 +75,7 @@ cargo build --release
 ./install.sh
 ```
 
-This builds the binary, adds it to your PATH, registers "Exclusive BT Switcher" in your app menu, and installs the app icon.
+This builds the binary, adds it to your PATH, registers "Exclusive BT Switcher" in your app menu, and installs the app icon. Run the same command to upgrade.
 
 To start at login, right-click the tray icon and check "Start at Login".
 

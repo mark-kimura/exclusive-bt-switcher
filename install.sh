@@ -5,7 +5,7 @@ ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
 ICON_PATH="$ICON_DIR/btswitch.png"
 
 echo "Building btswitch..."
-cargo install --path .
+cargo install --path . --force
 
 echo "Installing icon..."
 mkdir -p "$ICON_DIR"
