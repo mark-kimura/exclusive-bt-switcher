@@ -119,15 +119,21 @@ fn build_ui(app: &gtk::Application) {
     let cmd_tx_tray = main_window.cmd_sender().clone();
     ui::tray::spawn_tray(cmd_tx_tray);
 
-    // When window is closed, minimize to tray instead of exiting
+    // When window is closed, minimize to tray (preserves position)
     main_window.window.connect_close_request(move |window| {
         window.minimize();
+        // Set skip-taskbar so minimized window doesn't show in taskbar
+        let title = window.title().unwrap_or_default().to_string();
+        glib::idle_add_local_once(move || {
+            let _ = std::process::Command::new("wmctrl")
+                .args(["-r", &title, "-b", "add,skip_taskbar"])
+                .spawn();
+        });
         glib::Propagation::Stop
     });
 
     // Start minimized if --minimized flag is passed (used by autostart)
     if std::env::args().any(|a| a == "--minimized") {
-        // Must present first so GTK maps the window, then immediately minimize
         main_window.window.present();
         main_window.window.minimize();
     } else {

@@ -205,6 +205,11 @@ impl MainWindow {
                 self.bt_off_banner.set_visible(!powered);
             }
             Event::ShowWindow => {
+                // Remove skip-taskbar hint before showing
+                let title = self.window.title().unwrap_or_default();
+                let _ = std::process::Command::new("wmctrl")
+                    .args(["-r", &title, "-b", "remove,skip_taskbar"])
+                    .spawn();
                 self.window.unminimize();
                 self.window.present();
             }
