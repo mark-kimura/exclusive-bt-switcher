@@ -116,11 +116,10 @@ fn build_ui(app: &gtk::Application) {
     let cmd_tx_tray = main_window.cmd_sender().clone();
     ui::tray::spawn_tray(cmd_tx_tray);
 
-    // When window is closed, send shutdown to backend
-    let cmd_tx_close = main_window.cmd_sender().clone();
-    main_window.window.connect_close_request(move |_| {
-        let _ = cmd_tx_close.send(Command::Shutdown);
-        glib::Propagation::Proceed
+    // When window is closed, minimize to tray instead of exiting
+    main_window.window.connect_close_request(move |window| {
+        window.minimize();
+        glib::Propagation::Stop
     });
 
     main_window.window.present();

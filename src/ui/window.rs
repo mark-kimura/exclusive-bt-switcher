@@ -205,7 +205,6 @@ impl MainWindow {
                 self.bt_off_banner.set_visible(!powered);
             }
             Event::ShowWindow => {
-                self.window.set_visible(true);
                 self.window.unminimize();
                 self.window.present();
             }
