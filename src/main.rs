@@ -136,6 +136,12 @@ fn build_ui(app: &gtk::Application) {
     if std::env::args().any(|a| a == "--minimized") {
         main_window.window.present();
         main_window.window.minimize();
+        // Hide from taskbar — delay to ensure window is fully mapped
+        glib::timeout_add_local_once(std::time::Duration::from_millis(500), || {
+            let _ = std::process::Command::new("wmctrl")
+                .args(["-r", "Exclusive BT Switcher", "-b", "add,skip_taskbar"])
+                .spawn();
+        });
     } else {
         main_window.window.present();
     }
