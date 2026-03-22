@@ -161,19 +161,30 @@ pub fn spawn_tray(cmd_tx: mpsc::UnboundedSender<Command>) {
 
         rt.block_on(async {
             let (_w, _h, icon_argb) = decode_png_to_argb(ICON_PNG);
-            let tray = BtSwitchTray {
-                cmd_tx,
-                icon_argb,
-                autostart: is_autostart_enabled(),
-            };
-            match tray.spawn().await {
-                Ok(_handle) => {
-                    info!("System tray icon created");
-                    // Keep handle alive forever — dropping it unregisters the tray
-                    std::future::pending::<()>().await;
-                }
-                Err(e) => {
-                    warn!("Failed to create system tray: {e}. App works without tray.");
+
+            // Retry tray creation — at login, the StatusNotifierWatcher
+            // may not be ready yet when the app autostarts
+            let max_attempts = 10;
+            for attempt in 1..=max_attempts {
+                let tray = BtSwitchTray {
+                    cmd_tx: cmd_tx.clone(),
+                    icon_argb: icon_argb.clone(),
+                    autostart: is_autostart_enabled(),
+                };
+                match tray.spawn().await {
+                    Ok(_handle) => {
+                        info!("System tray icon created (attempt {attempt})");
+                        // Keep handle alive forever — dropping it unregisters the tray
+                        std::future::pending::<()>().await;
+                    }
+                    Err(e) => {
+                        if attempt < max_attempts {
+                            warn!("Tray attempt {attempt} failed: {e}. Retrying in 3s...");
+                            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                        } else {
+                            warn!("Failed to create system tray after {max_attempts} attempts: {e}. App works without tray.");
+                        }
+                    }
                 }
             }
         });
